@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="styles.css">
+    <title>AiBIM_Simulation</title>
+
+    <script src="./js/aframe-master.js"></script> 
+    <!-- <script src="https://aframe.io/releases/1.0.4/aframe.min.js"></script> -->
+    <!-- <script src="aframe-v1.0.4.js"></script>// -->
+    <script src="./js/bundle.js"></script>
+    <script src="./js/jquery.js"></script>
+    <script src="./js/task.js"></script> 
+    <script src="./js/buttons.js"></script> 
+    <script src="./js/updateInfo.js"></script> 
+    <script src="./js/overlay.js"></script> 
+    <script src="./js/stringConverter.js"></script> 
+    <script>
+
+     var strConverter = new StringConverter();
+
+     // 현재 마우스 위치 알아내기
+     var curMv; 
+      document.addEventListener('mousemove', (event) => { 
+          const x1 = event.clientX;
+          const x2 = document.querySelectorAll('#a_scene')[0].clientWidth; 
+          const y1 = event.clientY;
+          const y2 = document.querySelectorAll('#a_scene')[0].clientHeight;
+
+          curMv = {
+            x: (x1 / x2) * 2 - 1,
+            y: - (y1 / y2) * 2 + 1
+          };
+      }); 
+
+      // raycasting 함수 for laser-controls
+      function getPickingRaycaster(entity) {  
+          var laserPoint = entity;  
+          let raycaster =  laserPoint.components['raycaster'].raycaster; 
+          return raycaster;
+        }
+
+      const mat = new MeshLambertMaterial({
+            transparent: true,
+            opacity: 0.4,
+            color: 0x000000,
+            depthTest: false
+       });
+
+      AFRAME.registerComponent("cursor_click", {
+        init: function () { 
+          let onClick = (e) => {
+            let raycaster = null;
+            if(e.target?.hasAttribute("laser-controls")){
+              raycaster = getPickingRaycaster(e.target);
+            }
+            else if(e.target?.hasAttribute("cursor"))
+            {
+              if(AFRAME.scenes[0].states.indexOf("vr-mode") > -1){ 
+                return;
+              }
+
+              raycaster = new THREE.Raycaster();
+              let cam = document.querySelector("[camera]").getObject3D('camera');  
+              raycaster.setFromCamera(curMv, cam);       
+            }
+
+            var shwId = document.querySelector('#prpsetInfo'); 
+
+            // // 글자 수에 맞춰서 패널 크기 조절
+            // totalWidth = shwId.value.length * (shwId.width / shwId.wrapCount);
+            // raycastToShowPanel.setAttribute('width', totalWidth);
+            
+            // 메뉴 패널 뒤로 클릭 안되게 
+            let menuPanel = document.querySelector("#panel").object3D;            
+            let intersects = raycaster.intersectObject( menuPanel )[0];
+            if(intersects != null)
+               return;
+
+            intersects = raycaster.intersectObject( scene ).filter(o_=> o_.object?.visible == true)[0]; // 아직 load되지 않은 object는 클릭되지 않게
+            // modelid = intersects.object.modelID;
+            modelid = 0;
+
+            if (intersects) {
+                const index = intersects.faceIndex;
+                const geometry = intersects.object.geometry;
+                const ifc = ifcLoader.ifcManager;
+                const expid = ifc.getExpressId(geometry, index);    
+                exIds = [expid];
+                const prpsets =  ifc.getPropertySets(modelid, expid, false);
+
+                shwId.setAttribute('visible', "true");
+
+                prpsets.then((psets_) => {
+                  for(let pset_ of psets_){
+                    let nm = strConverter.decodeString(pset_.Name.value);
+                    // console.log(pset_.Name.value + "->"  + nm);
+                    if(nm == "기타"){
+                      var prpVal =''; 
+                      for(let p_ of pset_.HasProperties){
+                        let v = ifcLoader.ifcManager.state.api.GetLine(0, p_.value,true);
+                        let pnm = strConverter.decodeString(v.Name.value);
+                        let vnm = strConverter.decodeString(v.NominalValue.value);
+                        if(pnm == "유형"){
+                          console.log(`${pnm}: ${vnm}`);
+                          prpVal = prpVal.concat(`${pnm}: ${vnm}\n`);
+                        }
+                        if(pnm == "유형 ID"){
+                          console.log(`${pnm}: ${vnm}`);
+                          prpVal = prpVal.concat(`${pnm}: ${vnm}`);
+                        }
+                      }
+                    }
+                    shwId.setAttribute("text", "value", prpVal);
+                    //console.log(ifc.getItemProperties(modelid,  v_.expressID, false)); 
+                  } 
+                }); 
+                // click한 object higlight
+                ifc.createSubset({
+                  modelID: modelid,
+                  ids: exIds,
+                  material: mat,
+                  scene: scene,
+                  removePrevious: true,
+                });
+
+            }
+            else {
+              shwId.setAttribute('visible', "false");
+              ifcLoader.ifcManager.removeSubset(modelid, mat);
+            }    
+          };
+          
+          if(this.el.hasAttribute("laser-controls"))
+          { 
+            this.el.addEventListener("triggerdown", (e) => { onClick(e) });
+          }
+          else if(this.el.hasAttribute("cursor"))
+          { 
+            this.el.addEventListener("click", (e) => { onClick(e) });
+          }
+
+          //this.el.addEventListener("pinchstarted", (e) => { onClick(e) }); // 홀로렌즈
+          // this.el.addEventListener("click", (e) => { onClick(e) });
+        }
+      });
+
+ 
+
+
+     
+    </script>
+  </head>
+ 
+  <body> 
+    <canvas id="three-canvas"></canvas>    
+    <a-scene 
+      id="a_scene"  
+      background="color: #837E7C"
+      cursor="rayOrigin: mouse; fuse: false" 
+      raycaster="objects: .raycastable">
+
+      <!-- 이미지 로딩 -->
+      <a-assets>
+        <img id="replay" src="./img/replay.png">
+        <img id="play" src="./img/play.png">
+        <img id="pause" src="./img/pause.png">
+        <img id="wbtnimg" src="./img/wbtn.png">
+        <img id="sbtnimg" src="./img/sbtn.png">
+        <img id="abtnimg" src="./img/abtn.png">
+        <img id="dbtnimg" src="./img/dbtn.png">
+        <img id="visible" src="./img/visible1.png">
+        <img id="invisible" src="./img/blind.png">
+        <img id="upimg" src="./img/up.png">
+        <img id="downimg" src="./img/down.png">
+      </a-assets>
+
+      <!-- ifc 로딩 -->
+      <!-- <a-entity id="a_world" position="-10 -8 -30" class="raycastable"></a-entity> -->
+      <a-entity id="a_world" position="-10 -8 -30"></a-entity>
+
+      <!-- 터치를 위한 백그라운드 로딩 -->
+      <a-entity
+        id="background"
+        position="0 0 0"
+        geometry="primitive: sphere; radius: 2.0"
+        material="color: red; side: back; shader: flat"
+        scale="0.001 0.001 0.001"
+        visible="false" class="raycastable">
+      </a-entity>
+
+      <a-camera id="camera"> 
+        <!-- 버튼 배경 -->
+        <a-plane
+          overlay
+          id="panel"
+          position="0.14 -0.6 -8"
+          width="4.7"
+          height="2"
+          material="color: black; transparent: false; alphaTest: 0.5; opacity:1"
+        ></a-plane>
+
+        <!-- 플레이 버튼 -->
+        <a-box 
+          overlay
+          position="-1.7 -0.2 -8"
+          id="playbtn"
+          play
+          material="color: white; opacity:1"
+          width="0.5" 
+          height="0.5" 
+          depth="0.05" 
+          animation__scale="property: scale; to: 2 2 2; dur: 200; startEvents: mouseenter"
+          animation__scale_reverse="property: scale; to: 1 1 1; dur: 200; startEvents: mouseleave"
+          class="raycastable">
+          <a-image overlay id="playimg" src="#play" width="0.5" height="0.5" position="0 0 0.03" opacity="1"></a-image>
+          <!-- <a-image overlay id="pauseimg" src="#pause" width="0.5" height="0.5" position="0 0 0.03" opacity="0"></a-image> -->
+          <!-- material="color: white; transparent: true; alphaTest: 0.5; opacity:1" -->
+        </a-box>
+
+        <!-- 되감기 버튼 -->
+        <a-box 
+          overlay
+          position="-0.9 -0.2 -8"
+          id="rewindbtn"
+          rewind
+          material="color: white; transparent: true; alphaTest: 0.5; opacity:1"
+          width="0.5" 
+          height="0.5" 
+          depth="0.05" 
+          animation__scale="property: scale; to: 2 2 2; dur: 200; startEvents: mouseenter"
+          animation__scale_reverse="property: scale; to: 1 1 1; dur: 200; startEvents: mouseleave"
+          class="raycastable">
+          <a-image overlay src="#replay" width="0.5" height="0.5" position="0 0 0.03"></a-image>
+        </a-box>
+
+        <!-- 정보 on/off 버튼 -->
+        <a-box 
+          overlay
+          position="-0.1 -0.2 -8"
+          id="onoffbtn"
+          show-info
+          material="color: white; opacity:1"
+          width="0.5" 
+          height="0.5" 
+          depth="0.05" 
+          animation__scale="property: scale; to: 2 2 2; dur: 200; startEvents: mouseenter"
+          animation__scale_reverse="property: scale; to: 1 1 1; dur: 200; startEvents: mouseleave"
+          class="raycastable">
+          <a-image overlay id="visibleimg" src="#visible" width="0.5" height="0.5" position="0 0 0.03" opacity="1"></a-image>
+          <!-- material="color: white; transparent: true; alphaTest: 0.5; opacity:1" -->
+        </a-box>
+
+        <!-- w 버튼 -->
+        <a-box 
+          overlay
+          position="0.7 -0.4 -8"
+          id="wbtn"
+          wcomponent
+          material="color: white; transparent: true; alphaTest: 0.5; opacity:1"
+          width="0.5" 
+          height="0.5" 
+          depth="0.05" 
+          animation__scale="property: scale; to: 2 2 2; dur: 200; startEvents: mouseenter"
+          animation__scale_reverse="property: scale; to: 1 1 1; dur: 200; startEvents: mouseleave"
+          class="raycastable">
+          <a-image overlay src="#wbtnimg" width="0.5" height="0.5" position="0 0 0.03"></a-image>
+        </a-box>
+
+        <!-- s 버튼 -->
+        <a-box 
+          overlay
+          position="0.7 -1 -8"
+          id="sbtn"
+          scomponent
+          material="color: white; transparent: true; alphaTest: 0.5; opacity:1"
+          width="0.5" 
+          height="0.5" 
+          depth="0.05" 
+          animation__scale="property: scale; to: 2 2 2; dur: 200; startEvents: mouseenter"
+          animation__scale_reverse="property: scale; to: 1 1 1; dur: 200; startEvents: mouseleave"
+          class="raycastable">
+          <a-image overlay src="#sbtnimg" width="0.5" height="0.5" position="0 0 0.03"></a-image>
+        </a-box>
+
+        <!-- a 버튼 -->
+        <a-box 
+          overlay
+          position="0.1 -1 -8"
+          id="abtn"
+          acomponent
+          material="color: white; transparent: true; alphaTest: 0.5; opacity:1"
+          width="0.5" 
+          height="0.5" 
+          depth="0.05" 
+          animation__scale="property: scale; to: 2 2 2; dur: 200; startEvents: mouseenter"
+          animation__scale_reverse="property: scale; to: 1 1 1; dur: 200; startEvents: mouseleave"
+          class="raycastable">
+          <a-image overlay src="#abtnimg" width="0.5" height="0.5" position="0 0 0.03"></a-image>
+        </a-box>
+
+        <!-- d 버튼 -->
+        <a-box 
+          overlay
+          position="1.3 -1 -8"
+          id="dbtn"
+          dcomponent
+          material="color: white; transparent: true; alphaTest: 0.5; opacity:1"
+          width="0.5" 
+          height="0.5" 
+          depth="0.05" 
+          animation__scale="property: scale; to: 2 2 2; dur: 200; startEvents: mouseenter"
+          animation__scale_reverse="property: scale; to: 1 1 1; dur: 200; startEvents: mouseleave"
+          class="raycastable">
+          <a-image overlay src="#dbtnimg" width="0.5" height="0.5" position="0 0 0.03"></a-image>
+        </a-box>
+
+        <!-- up 버튼 -->
+        <a-box 
+          overlay
+          position="2 -0.2 -8"
+          id="upbtn"
+          upcomponent
+          material="color: white; transparent: true; alphaTest: 0.5; opacity:1"
+          width="0.5" 
+          height="0.5" 
+          depth="0.05" 
+          animation__scale="property: scale; to: 2 2 2; dur: 200; startEvents: mouseenter"
+          animation__scale_reverse="property: scale; to: 1 1 1; dur: 200; startEvents: mouseleave"
+          class="raycastable">
+          <a-image overlay src="#upimg" width="0.5" height="0.5" position="0 0 0.03"></a-image>
+        </a-box>
+
+        <!-- down 버튼 -->
+        <a-box 
+          overlay
+          position="2 -1 -8"
+          id="dnbtn"
+          dncomponent
+          material="color: white; transparent: true; alphaTest: 0.5; opacity:1"
+          width="0.5" 
+          height="0.5" 
+          depth="0.05" 
+          animation__scale="property: scale; to: 2 2 2; dur: 200; startEvents: mouseenter"
+          animation__scale_reverse="property: scale; to: 1 1 1; dur: 200; startEvents: mouseleave"
+          class="raycastable">
+          <a-image overlay src="#downimg" width="0.5" height="0.5" position="0 0 0.03"></a-image>
+        </a-box>
+
+        <!-- 프로그래스 바 -->
+        <a-entity 
+          id="progress_panel" 
+          position="-1.2 -1 -8"
+          visible="true"
+          show-info>
+          <a-entity id="progress_bar" position="0 0 0">
+            <a-box overlay material="color: white; transparent: true; alphaTest: 0.5; opacity:1" width="1.6"  height="0.05"  depth="0.05"></a-box>
+          </a-entity> 
+          <a-entity id="progress_point" position="-0.8 0 0">
+            <a-box overlay material="color: tomato; transparent: true; alphaTest: 0.5; opacity:1" width="0.03"  height="0.15"  depth="0.06" ></a-box>  
+          </a-entity>
+        </a-entity>
+
+        <!-- 현재 날짜 및 누적 금액 텍스트 -->
+        <a-entity 
+          overlay
+          id="property-panel"
+          position="-1.2 -1 -8">
+          <a-text
+            update-date
+            overlay_text
+            font="dejavu"  
+            id="id_date" 
+            value="123" 
+            color="white"
+            negate="false"
+            position="0 -0.2 0"
+            width="3"  
+            height="3">
+          </a-text>
+          <a-text
+            update-cost  
+            overlay_text
+            font="dejavu" 
+            id="id_cost" 
+            value="123" 
+            color="white"
+            negate="false"
+            position="0 -0.41 0"
+            width="3"  
+            height="3">
+          </a-text>
+          <a-text 
+            overlay_text
+            value="현재 날짜"
+            font="./img/currentDate-msdf.json"
+            color="white"
+            negate="false"
+            position="-0.7 -0.2 0"
+            width="4"  
+            height="4">
+          </a-text>
+          <a-text 
+            overlay_text
+            value="누적 금액"
+            font="./img/currentCost-msdf.json"
+            color="white"
+            negate="false"
+            position="-0.7 -0.4 0"
+            width="4"  
+            height="4">
+          </a-text>
+        </a-entity>
+
+        <!-- 클릭시 내용보여주는 패널 -->
+          <a-entity
+            id="prpsetInfo"
+            overlay_text
+            overlay
+            visible="false"
+            position="0.14 -2.2 -8"
+            geometry="primitive: plane; height: 0.8; width: 4.7;"
+            material="color: black"
+            text="width: 4.6; font: https://raw.githubusercontent.com/myso-kr/aframe-fonts-korean/master/fonts/ofl/nanumgothic/NanumGothic-Regular.json; value: 길경민; shader: msdf">
+          </a-entity>
+
+       </a-camera>
+
+      <!-- Hand controls -->
+      <a-entity cursor cursor_click raycaster="objects: .raycastable"></a-entity>
+      <a-entity id="leftHand" cursor_click laser-controls="hand: left" raycaster="objects: .raycastable"></a-entity>
+      <a-entity id="rightHand" cursor_click laser-controls="hand: right" raycaster="objects: .raycastable"></a-entity>
+
+
+    </a-scene>
+  </body>
+</html>
+
+<script>
+
+// Sets up the scene
+let scene = $("#a_world")[0].object3D;
+
+//Sets up the IFC loading
+const ifcModels = [];
+const ifcLoader = new IFCLoader();
+const taskScheduler = new TaskScheduler(); 
+
+ifcLoader.ifcManager.setWasmPath("../../../");
+ifcLoader.load("./KBIMS_Sample Model.ifc", async (ifcModel) => 
+{
+    ifcModels.push(ifcModel);   
+    await loadFloors();
+});
+
+async function collectNodes(node, map) {
+  if (node.expressID == null)
+    return;
+  try {
+    let props = await ifcLoader.ifcManager.getItemProperties(0, node.expressID);
+    let guid = props["GlobalId"]?.value;
+    if (guid != null) {
+      map.set(guid, node);
+    }
+  } 
+  catch {
+    return;
+  }
+  if (node.children != null) {
+    for (let ch of node.children) {
+      await collectNodes(ch, map);
+    }
+  }
+}
+
+async function loadFloors() { 
+  let ifcProject =  await ifcLoader.ifcManager.getSpatialStructure(0);   
+  let map = new Map(); 
+  await collectNodes(ifcProject.children[0].children[0],map);
+  // const storeys = ifcProject.children[0].children[0].children; 
+  //   for(let storey of storeys) { 
+  //       //newSubsetOfFloor(storey); 
+  //   }
+ 
+    $.getJSON("5DSim.json", (data)=>{
+      taskScheduler.map = map;
+      taskScheduler.load(data);
+   }); 
+}
+</script>
